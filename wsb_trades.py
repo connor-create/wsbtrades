@@ -1,10 +1,11 @@
-import os
 import alpaca_trade_api as tradeapi
+from trade_models import positive_points
+
+import os
 import praw
 import time
 import math
 
-import trade_models
 
 os.environ['APCA_API_BASE_URL'] = "https://paper-api.alpaca.markets"
 os.environ['APCA_API_KEY_ID'] = ""
@@ -20,89 +21,92 @@ reddit = praw.Reddit(client_id="",
                      )
 
 # holds the values for each cycle
-stockPoints = {}
+stock_points = {}
 
-# holds the share amounts to be calculated
-shareAmounts = {}
+share_amounts = {}
 
 
-# define all the functions needed
-def add_points(stockTicker, pointValue):
-    if stockTicker in stockPoints.keys():
-        stockPoints[stockTicker] += pointValue
+def add_points(stock_ticker, point_value):
+    if stock_ticker in stock_points:
+        stock_points[stock_ticker] += point_value
     else:
-        stockPoints[stockTicker] = pointValue
+        stock_points[stock_ticker] = point_value
 
 
 def process_comment(comment):
-    # loop over all the assets cause im a terrible programmer and dont know how to do this elsewise
-    assetList = api.list_assets(status='active')
+    asset_list = api.list_assets(status='active')
 
-    # see if there's some points to get
-    for pointStringList in trade_models.positive_points:
-        if pointStringList[0] in comment.body and pointStringList[1] in comment.body:
-            for asset in assetList:
-                # if the comment has the symbol, lets give that stock ticker some points
-                symbolString = " " + asset.symbol + " "
-                if symbolString in comment.body:
-                    add_points(asset.symbol, pointStringList[2] * (comment.score - 4) * comment.body.count(pointStringList[0]))
-                    print(asset.symbol, stockPoints[asset.symbol])
+    for point_string_list in positive_points:
+        if point_string_list[0] in comment.body and point_string_list[1] in comment.body:
+            for asset in asset_list:
+                symbol_string = f" {asset.symbol} "
+                if symbol_string in comment.body:
+                    comment_score = comment.score - 4
+                    point_value = point_string_list[2] * comment_score * comment.body.count(point_string_list[0])
+                    add_points(asset.symbol, point_value)
+                    print(asset.symbol, stock_points[asset.symbol])
 
 
 def update_wsb_valuations():
-    for submission in reddit.subreddit("wallstreetbets").hot(limit=10):
+    """check rolling comments on wsb new for our new values"""
+    hot_posts = reddit.subreddit('wallstreetbets').hot(limit=10)
+
+    for submission in hot_posts:
         print("new post")
-        submission.comments.replace_more(0)
-        for comment in submission.comments:
-            if comment.score < 5:
-                continue
-            process_comment(comment)
+        sub_comments = submission.comments
+        sub_comments.replace_more(0)
+
+        for comment in sub_comments:
+            if comment.score > 5:
+                process_comment(comment)
+            continue
+
+
+def get_account_value(account_value):
+    for position in api.list_positions():
+        price = api.get_last_trade(position.symbol).price
+        account_value += float(price) * float(position.qty)
+    return account_value
 
 
 while True:
-    # clear the stockPoints so we can get our new values
-    stockPoints.clear()
+    stock_points.clear()
 
-    # check if market is open for the next 10 minutes, else don't do anything
     if not api.get_clock().is_open:
         print('Market is not open.')
-        time.sleep(60 * 5)
+        time.sleep(300)
         continue
 
-    # Check if our account is restricted from trading for some oppressive reason
     if api.get_account().trading_blocked:
         print('Account is currently restricted from trading.')
-        time.sleep(60 * 10)
+        time.sleep(600)
         continue
 
-    # check rolling comments on wsb new for our new values
     print("Begin updating...")
     update_wsb_valuations()
 
-    # find out our total value through stocks and buying power
     account = api.get_account()
-    accountValue = float(account.buying_power)
-    for position in api.list_positions():
-        accountValue = accountValue + (float(api.get_last_trade(position.symbol).price) * float(position.qty))
+    account_value = float(account.buying_power)
+    account_value = get_account_value(account_value)
 
     # get our stock amounts that we should be holding
     totalPoints = 0
-    for ticker in stockPoints.keys():
-        totalPoints += stockPoints[ticker]
-    for ticker in stockPoints.keys():
+    for ticker in stock_points.keys():
+        totalPoints += stock_points[ticker]
+    for ticker in stock_points.keys():
         # calculate percentage of total points this stock accounts for
-        percentage = (stockPoints[ticker] / totalPoints)
+        percentage = (stock_points[ticker] / totalPoints)
         # how much money should we have of this stock? multiply by .9 to have a 10% error threshold
-        moneyAmount = math.floor(percentage * accountValue * .9)
+        moneyAmount = math.floor(percentage * account_value * .9)
         # how many shares does that equate to?  if it's not a full share than we don't buy!
         shareAmount = math.floor(moneyAmount / float(api.get_last_trade(ticker).price))
-        print(totalPoints, ticker, stockPoints[ticker], moneyAmount, api.get_last_trade(ticker).price, shareAmount, percentage, accountValue)
+        print(totalPoints, ticker, stock_points[ticker], moneyAmount, api.get_last_trade(ticker).price, shareAmount, percentage, account_value)
         if shareAmount > 0:
-            shareAmounts[ticker] = shareAmount
+            share_amounts[ticker] = shareAmount
 
     # sell anything we have too much of
     for position in api.list_positions():
-        if position.symbol not in shareAmounts:
+        if position.symbol not in share_amounts:
             # sell it all we don't want it
             try:
                 api.submit_order(
@@ -116,12 +120,12 @@ while True:
                 pass
 
             time.sleep(2)
-        elif shareAmounts[position.symbol] < int(position.qty):
+        elif share_amounts[position.symbol] < int(position.qty):
             # sell the difference
             try:
                 api.submit_order(
                     symbol=position.symbol,
-                    qty=(int(position.qty) - int(shareAmounts[position.symbol])),
+                    qty=(int(position.qty) - int(share_amounts[position.symbol])),
                     side='sell',
                     type='market',
                     time_in_force='day'
@@ -132,18 +136,18 @@ while True:
     # wait and hopefully the orders goes through
     time.sleep(60)
     # buy the ones that I do need
-    for ticker in shareAmounts.keys():
+    for ticker in share_amounts.keys():
         # if I already have some of this, see if i need to buy more
         found = False
         for position in api.list_positions():
             if ticker == position.symbol:
-                if shareAmounts[ticker] > int(position.qty):
+                if share_amounts[ticker] > int(position.qty):
                     found = True
                     # buy more shares!
                     try:
                         api.submit_order(
                             symbol=ticker,
-                            qty=(int(shareAmounts[ticker]) - int(position.qty)),
+                            qty=(int(share_amounts[ticker]) - int(position.qty)),
                             side='buy',
                             type='market',
                             time_in_force='day'
@@ -157,7 +161,7 @@ while True:
             try:
                 api.submit_order(
                     symbol=ticker,
-                    qty=int(shareAmounts[ticker]),
+                    qty=int(share_amounts[ticker]),
                     side='buy',
                     type='market',
                     time_in_force='day'
