@@ -18,7 +18,6 @@ positive_points = (("💎", "", 1),
                    (" hold ", "", 1),
                    (" never sell ", "", 10),
                    (" winning ", "", 2),
-                   (" cum ", "", 4),
                    (" orbit ", "", 4),
                    (" profit ", "", 2),
                    ("i like the stock", "", 10))
