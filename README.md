@@ -1,3 +1,3 @@
-# r/wallstreetbets trade manager
+# r/wallstreetbets stock trader
 
-hence the name, manages the trades in r/wallstreetbets
+Uses hilarious comment semantics to buy stocks that wallstreetbets thinks it should buy using the alpaca and reddit api
