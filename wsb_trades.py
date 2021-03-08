@@ -90,24 +90,29 @@ while True:
     account_value = get_account_value(account_value)
 
     # get our stock amounts that we should be holding
-    totalPoints = 0
-    for ticker in stock_points.keys():
-        totalPoints += stock_points[ticker]
-    for ticker in stock_points.keys():
-        # calculate percentage of total points this stock accounts for
+    totalPoints = sum(stock_points.values())
+
+    for ticker in stock_points:
         percentage = (stock_points[ticker] / totalPoints)
-        # how much money should we have of this stock? multiply by .9 to have a 10% error threshold
         moneyAmount = math.floor(percentage * account_value * .9)
-        # how many shares does that equate to?  if it's not a full share than we don't buy!
-        shareAmount = math.floor(moneyAmount / float(api.get_last_trade(ticker).price))
-        print(totalPoints, ticker, stock_points[ticker], moneyAmount, api.get_last_trade(ticker).price, shareAmount, percentage, account_value)
+        ticker_price = api.get_last_trade(ticker).price
+        shareAmount = math.floor(moneyAmount / float(ticker_price))
+
+        print(totalPoints,
+              ticker,
+              stock_points[ticker],
+              moneyAmount,
+              ticker_price,
+              shareAmount,
+              percentage,
+              account_value)
+
         if shareAmount > 0:
             share_amounts[ticker] = shareAmount
 
     # sell anything we have too much of
     for position in api.list_positions():
         if position.symbol not in share_amounts:
-            # sell it all we don't want it
             try:
                 api.submit_order(
                     symbol=position.symbol,
